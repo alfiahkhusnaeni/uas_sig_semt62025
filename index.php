@@ -1,53 +1,70 @@
 <?php
-// ---------- PHP: Ambil data ----------
 include 'db_connection.php';
 
-// data layanan kesehatan → marker
-$serviceSql   = "SELECT id, name, latitude, longitude FROM health_services";
-$serviceRes   = $conn->query($serviceSql);
-$healthSrvArr = [];
-while ($row = $serviceRes->fetch_assoc()) $healthSrvArr[] = $row;
+/* hitung total layanan & ambil data marker */
+$count = $conn->query("SELECT COUNT(*) total FROM health_services")->fetch_assoc()['total'];
+$svc   = $conn->query("SELECT name, latitude, longitude FROM health_services");
+$services = [];
+while ($row = $svc->fetch_assoc()) $services[] = $row;
 
-// data jamaah haji per kecamatan → choropleth
-$hajiSql = "SELECT nama_kecamatan, jumlah_jamaah_haji FROM kecamatan";
-$hajiRes = $conn->query($hajiSql);
-$hajiArr = [];
-while ($row = $hajiRes->fetch_assoc()) $hajiArr[$row['nama_kecamatan']] = (int)$row['jumlah_jamaah_haji'];
+/* data lansia per kecamatan */
+$res = $conn->query("SELECT nama_kecamatan, jumlah_penduduk, jumlah_lansia FROM penduduk");
+$lansia = [];
+$lansia = [];
+while ($row = $res->fetch_assoc()) {
+    $lansia[$row['nama_kecamatan']] = [
+        'jumlah_penduduk' => (int)$row['jumlah_penduduk'],
+        'jumlah_lansia' => (int)$row['jumlah_lansia']
+    ];
+}
 
 $conn->close();
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Peta Kecamatan & Jamaah Haji Kabupaten Banyumas</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <meta charset="UTF-8">
+    <title>UAS SIG Alfiah-22EO10052</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Leaflet & plugin CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/leaflet-extra-markers@1.2.1/dist/css/leaflet.extra-markers.min.css">
+
     <style>
-    html,
-    body {
-        height: 100%;
+    /* ———— GAYA ASLI ———— */
+    <?php ?>#map {
+        height: 400px;
+    }
+
+    /* tingginya nanti dioverride 500px oleh style inline */
+    * {
         margin: 0;
-        font-family: Arial, Helvetica, sans-serif
-    }
-
-    #container {
-        display: flex;
-        height: 100%
-    }
-
-    #sidebar {
-        width: 260px;
-        background: #2c3e50;
-        color: #fff;
-        padding: 20px;
+        padding: 0;
         box-sizing: border-box
     }
 
+    body {
+        font-family: Arial, sans-serif;
+        display: flex;
+        height: 100vh
+    }
+
+    #sidebar {
+        width: 250px;
+        background: #2c3e50;
+        color: #fff;
+        padding: 20px
+    }
+
     #sidebar h2 {
-        margin-top: 0
+        margin-bottom: 20px;
+        font-size: 20px;
+        border-bottom: 1px solid #555;
+        padding-bottom: 10px
     }
 
     #sidebar button {
@@ -55,8 +72,9 @@ $conn->close();
         padding: 10px;
         margin-top: 10px;
         border: none;
-        color: #fff;
         background: #3498db;
+        color: #fff;
+        font-size: 16px;
         cursor: pointer
     }
 
@@ -64,128 +82,226 @@ $conn->close();
         background: #2980b9
     }
 
+    #main-content {
+        flex-grow: 1;
+        display: flex;
+        flex-direction: column;
+        height: 100%
+    }
+
+    #header {
+        padding: 15px 25px;
+        background: #ecf0f1;
+        border-bottom: 1px solid #ccc
+    }
+
+    #header h1 {
+        font-size: 24px;
+        color: #2c3e50
+    }
+
+    #stats {
+        padding: 10px 25px;
+        background: #f9f9f9;
+        border-bottom: 1px solid #ddd
+    }
+
     #map {
-        flex: 1 1 auto;
-        min-height: 400px
+        flex-grow: 1;
+        width: 100%;
+        height: 500px
     }
 
-    #legend {
-        position: absolute;
-        top: 20px;
-        right: 20px;
+    #data-table {
+        padding: 20px 25px;
         background: #fff;
-        padding: 10px 15px;
-        border-radius: 6px;
-        box-shadow: 0 0 8px rgba(0, 0, 0, .3);
-        font-size: 14px;
-        z-index: 1000;
-        line-height: 18px
-    }
-
-    .swatch {
-        display: inline-block;
-        width: 22px;
-        height: 14px;
-        margin-right: 8px
-    }
-
-    #info {
-        padding: 15px 0;
-        color: #ecf0f1;
-        font-size: 14px
+        overflow-x: auto
     }
     </style>
+
+    <!-- Library JS (HARUS sebelum skrip utama) -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-extra-markers@1.2.1/dist/js/leaflet.extra-markers.min.js">
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
 </head>
 
 <body>
-    <div id="container">
-        <div id="sidebar">
-            <h2>SIG Banyumas</h2>
-            <button onclick="window.open('crud.php','_blank')">Kelola Data</button>
-            <div id="info">Klik kecamatan untuk melihat jumlah jamaah haji.</div>
-        </div>
-        <div id="map"></div>
-        <div id="legend"></div>
+    <!-- ———— SIDEBAR ———— -->
+    <div id="sidebar">
+        <h2>SIG Banyumas</h2>
+        <button onclick="window.open('crud.php','_blank')">Data Layanan</button>
     </div>
 
-    <!--  Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- ———— MAIN ———— -->
+    <div id="main-content" style="position:relative;display:flex;flex-direction:column;height:100%;">
+        <div id="header">
+            <h1>Peta Demografi Lansia di Kabupaten Banyumas</h1>
+        </div>
+
+        <div id="stats">
+            <p>Total Layanan Kesehatan: <strong><?= $count ?></strong></p>
+        </div>
+
+        <div id="map" style="height:500px;"></div>
+
+        <div id="data-table">
+            <h2 style="margin-bottom:10px;">Data Penduduk Lansia Kecamatan</h2>
+            <table id="kecamatan-table" style="width:100%;border-collapse:collapse;display:none;">
+                <thead>
+                    <tr style="background:#f1f1f1;">
+                        <th>Nama Kecamatan</th>
+                        <th>Jumlah Lansia (Jiwa)</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body"></tbody>
+            </table>
+            <div id="no-data" style="color:#777;">Klik salah satu kecamatan untuk melihat datanya.</div>
+        </div>
+    </div>
+
+    <!-- ———— LEGEND (HTML tetap) ———— -->
+    <div id="legend" style="
+    position: absolute;
+    top: 110px;
+    right: 20px;
+    background: white;
+    padding: 10px 15px;
+    border-radius: 6px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+    color: #333;
+    z-index: 1000;
+    width: 180px;
+  ">
+        <h4 style="margin:0 0 8px 0;">Jumlah Penduduk Lansia</h4>
+        <div><span
+                style="background:#800026;width:20px;height:14px;display:inline-block;margin-right:8px;border:1px solid #ccc"></span>Sangat
+            Tinggi</div>
+        <div><span
+                style="background:#BD0026;width:20px;height:14px;display:inline-block;margin-right:8px;border:1px solid #ccc"></span>Tinggi
+        </div>
+        <div><span
+                style="background:#E31A1C;width:20px;height:14px;display:inline-block;margin-right:8px;border:1px solid #ccc"></span>Sedang
+        </div>
+        <div><span
+                style="background:#FC4E2A;width:20px;height:14px;display:inline-block;margin-right:8px;border:1px solid #ccc"></span>Rendah
+        </div>
+        <div><span
+                style="background:#FD8D3C;width:20px;height:14px;display:inline-block;margin-right:8px;border:1px solid #ccc"></span>Sangat
+            Rendah</div>
+    </div>
 
     <script>
-    // ---------- JS: Ambil data PHP ----------
-    const healthServices = <?php echo json_encode($healthSrvArr, JSON_NUMERIC_CHECK); ?>;
-    const hajiData = <?php echo json_encode($hajiArr, JSON_NUMERIC_CHECK); ?>;
+    /* -------- DATA PHP ke JS -------- */
+    const services = <?= json_encode($services, JSON_NUMERIC_CHECK) ?>;
+    const lansia = <?= json_encode($lansia,   JSON_NUMERIC_CHECK) ?>;
 
-    // ---------- Inisiasi Peta ----------
-    const map = L.map('map').setView([-7.45, 109.16], 11);
+    /* -------- INISIALISASI PETA -------- */
+    const map = L.map('map').setView([-7.450161992561026, 109.16218062235068], 10);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; OpenStreetMap'
+        maxZoom: 17,
+        attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    // ---------- Marker Layanan Kesehatan ----------
-    healthServices.forEach(s => {
-        L.marker([s.latitude, s.longitude]).addTo(map).bindPopup(`<b>${s.name}</b>`);
+    /* -------- MARKER LAYANAN -------- */
+    const hospitalIcon = L.ExtraMarkers.icon({
+        icon: 'fa-hospital',
+        markerColor: 'blue',
+        shape: 'circle',
+        prefix: 'fa'
+    });
+    services.forEach(s => {
+        L.marker([s.latitude, s.longitude], {
+                icon: hospitalIcon
+            })
+            .addTo(map)
+            .bindPopup(`<b>${s.name}</b>`);
     });
 
-    // ---------- Choropleth Jamaah Haji ----------
-    function getColorHaji(d) {
-        return d > 300 ? '#084594' : d > 200 ? '#2171b5' : d > 100 ? '#4292c6' : d > 50 ? '#6baed6' : d > 0 ?
-            '#bdd7e7' : '#eff3ff';
+    /* -------- CHOROPLETH LANSIA -------- */
+    function getColor(d) {
+        return d > 1100 ? '#800026' :
+            d > 800 ? '#BD0026' :
+            d > 500 ? '#E31A1C' :
+            d > 300 ? '#FC4E2A' :
+            d > 0 ? '#FD8D3C' : '#ffffe5';
     }
 
     function style(feature) {
         const nama = feature.properties.Name || feature.properties.nama_kecamatan;
-        const val = hajiData[nama] || 0;
+        const row = lansia[nama] || {
+            jumlah_penduduk: 0,
+            jumlah_lansia: 0
+        };
         return {
-            fillColor: getColorHaji(val),
+            fillColor: getColor(row.jumlah_lansia),
             weight: 2,
-            color: '#fff',
+            color: '#FFF',
             dashArray: '3',
             fillOpacity: 0.7
         };
     }
 
+    /* --- Pemrosesan klik & tabel --- */
+    function bukaTabel(nama, val) {
+        document.getElementById('table-body').innerHTML =
+            `<tr><td style="padding:8px 12px;border:1px solid #ddd;">${nama}</td>
+      <td style="padding:8px 12px;border:1px solid #ddd;">${val.toLocaleString()}</td></tr>`;
+        document.getElementById('kecamatan-table').style.display = 'table';
+        document.getElementById('no-data').style.display = 'none';
+    }
+
+    /* -------- LOAD GEOJSON BENAR -------- */
+    let geoLayer = null,
+        clicked = null;
     fetch('data/kecamatan.json')
         .then(r => r.json())
-        .then(geo => {
-            L.geoJSON(geo, {
+        .then(json => {
+            geoLayer = L.geoJSON(json, {
                 style,
                 onEachFeature: (feature, layer) => {
                     const nama = feature.properties.Name || feature.properties.nama_kecamatan;
-                    const val = hajiData[nama] || 0;
+                    const data = lansia[nama] || {
+                        jumlah_penduduk: 0,
+                        jumlah_lansia: 0
+                    };
+
                     layer.bindPopup(
-                        `<b>${nama}</b><br>Jamaah Haji 2025: <b>${val.toLocaleString()}</b>`);
-                    layer.on({
-                        mouseover: e => {
-                            e.target.setStyle({
-                                weight: 3,
-                                color: '#000',
-                                fillOpacity: 0.9
-                            });
-                        },
-                        mouseout: e => {
-                            geoLayer.resetStyle(e.target);
-                        },
-                        click: e => {
-                            document.getElementById('info').innerHTML =
-                                `<b>${nama}</b><br>Jamaah Haji 2025: <b>${val.toLocaleString()}</b>`;
-                        }
+                        `<b>${nama}</b><br>Penduduk: ${data.jumlah_penduduk.toLocaleString()}<br>Lansia: ${data.jumlah_lansia.toLocaleString()}`
+                    );
+
+                    layer.on('click', () => {
+                        if (clicked) layer.resetStyle(clicked);
+                        clicked = layer;
+                        layer.setStyle({
+                            fillColor: '#662506',
+                            weight: 3,
+                            color: '#000',
+                            fillOpacity: 1
+                        });
+                        bukaTabel(nama, data.jumlah_lansia);
+                    });
+                    layer.on('mouseout', e => {
+                        if (clicked !== layer) layer.resetStyle(feature);
                     });
                 }
             }).addTo(map);
-            drawLegend();
+
+            /* gambar legenda */
+            buildLegend();
         });
 
-    // ---------- Legend ----------
-    function drawLegend() {
-        const grades = [0, 50, 100, 200, 300];
-        let html = '<h4>Jamaah Haji</h4>';
+    function buildLegend() {
+        const grades = [0, 300, 500, 800, 1100];
+        let html = '<h4>Jumlah Lansia</h4>';
         for (let i = grades.length - 1; i >= 0; i--) {
             const from = grades[i];
             const to = grades[i + 1];
-            html += `<div><span class="swatch" style="background:${getColorHaji(from+1)}"></span>
-            ${to?from.toLocaleString()+'–'+to.toLocaleString():'≥ '+from.toLocaleString()}</div>`;
+            html += `<div><span class="swatch" style="background:${getColor(from+1)}"></span> ${
+      to ? (from+1)+'–'+to : '≥ '+from
+    }</div>`;
         }
         document.getElementById('legend').innerHTML = html;
     }
