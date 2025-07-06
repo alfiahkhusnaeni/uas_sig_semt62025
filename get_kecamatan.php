@@ -3,7 +3,7 @@ if (isset($_GET['nama'])) {
     include 'db_connection.php';
     $nama = $_GET['nama'];
 
-    $stmt = $conn->prepare("SELECT nama_kecamatan, jumlah_penduduk, jumlah_jamaah_haji FROM kecamatan WHERE nama_kecamatan = ?");
+    $stmt = $conn->prepare("SELECT nama_kecamatan, jumlah_penduduk, jumlah_lansia FROM penduduk WHERE nama_kecamatan = ?");
     $stmt->bind_param("s", $nama);
     $stmt->execute();
 
